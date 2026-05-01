@@ -2,8 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Q
-from django.contrib.auth.hashers import check_password
-from .models import ChildProfile, DoctorChildAccess
+from django.contrib.auth.hashers import check_password, make_password
+from .models import ChildProfile, DoctorChildAccess, generate_child_password
 from .serializers import ChildProfileSerializer, ChildAccessSerializer, ClinicNoteSerializer
 from users.permissions import IsDoctorOrParent, IsDoctor
 
@@ -36,6 +36,33 @@ class ChildProfileListCreateView(APIView):
             }, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class RegenerateChildPasswordView(APIView):
+    permission_classes = [IsDoctorOrParent]
+
+    def post(self, request, child_id):
+        child = ChildProfile.objects.filter(child_id=child_id).first()
+
+        if not child:
+            return Response({'error': 'Child not found.'}, status=404)
+
+        if child.created_by_id != request.user.id:
+            return Response(
+                {'error': 'Access denied. Only the creator can regenerate this password.'},
+                status=403
+            )
+
+        new_password = generate_child_password()
+        child.hashed_password = make_password(new_password)
+        child.save(update_fields=['hashed_password', 'updated_at'])
+
+        return Response({
+            'message': 'Child password regenerated successfully.',
+            'child_id': child.child_id,
+            'password': new_password,
+        }, status=200)
+    
 
 class ChildProfileDetailView(APIView):
     permission_classes = [IsDoctorOrParent]

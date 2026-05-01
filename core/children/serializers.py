@@ -95,6 +95,14 @@ class ChildProfileSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
+        json_fields = ['basic_info', 'dev_milestones', 'med_history', 'behavior']
+
+        for field in json_fields:
+            if field in validated_data and validated_data[field] is not None:
+                current_value = getattr(instance, field) or {}
+                new_value = validated_data[field] or {}
+                validated_data[field] = {**current_value, **new_value}
+
         return super().update(instance, validated_data)
 
 

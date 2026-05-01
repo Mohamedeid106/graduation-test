@@ -69,13 +69,13 @@ class ASDVideosView(APIView):
             return child
 
         # Extract files and questionnaire from the request
-        motion_video = request.FILES.get('motion_video')
+        motion_video = request.FILES.get('behavioral_video')
         emotion_video = request.FILES.get('emotion_video')
-        questionnaire = request.data.get('questionnaire')
+        questionnaire = request.data.get('questionnaire_data')
 
         # All three are required for the AI server to process. If any is missing, return an error.
         if not all([motion_video, emotion_video, questionnaire]):
-            return Response({'error': 'motion_video, emotion_video, and questionnaire are all required.'}, status=400)
+            return Response({'error': 'behavioral_video, emotion_video, and questionnaire_data are all required.'}, status=400)
         
         # Validate file types before sending to AI server
         err = validate_file_type(motion_video, ALLOWED_VIDEO_TYPES, 'motion_video')
@@ -131,22 +131,43 @@ class ASDPhysiologyView(APIView):
         if isinstance(child, Response):
             return child
 
-        physiology_file = request.FILES.get('physiology_file')
-        if not physiology_file:
-            return Response({'error': 'physiology_file is required.'}, status=400)
+        eeg_vhdr = request.FILES.get('eeg_vhdr')
+        eeg_vmrk = request.FILES.get('eeg_vmrk')
+        eeg_data = request.FILES.get('eeg_data')
+        if not all([eeg_vhdr, eeg_vmrk, eeg_data]):
+            return Response({'error': 'eeg_vhdr, eeg_vmrk, and eeg_data are all required.'}, status=400)
         
         # Validate file type before sending to AI server
-        err = validate_file_type(physiology_file, ALLOWED_EEG_TYPES, 'physiology_file')
+        err = validate_file_type(eeg_vhdr, ALLOWED_EEG_TYPES, 'eeg_vhdr')
+        if err: return Response({'error': err}, status=400)
+        err = validate_file_type(eeg_vmrk, ALLOWED_EEG_TYPES, 'eeg_vmrk')
+        if err: return Response({'error': err}, status=400)
+        err = validate_file_type(eeg_data, ALLOWED_EEG_TYPES, 'eeg_data')
         if err: return Response({'error': err}, status=400)
 
-        # Same logic: update if exists, create if not.
-        # This does NOT touch motion_video or questionnaire fields at all.
-        report, _ = ASDReport.objects.update_or_create(
-            child=child,
-            defaults={
-                "physiology_file": physiology_file,
-            },
-        )
+        try:
+            report = child.asd_report
+        except ASDReport.DoesNotExist:
+            return Response({'error': 'ASD videos must be processed before physiology files.'}, status=400)
+
+        videos_ai_response = report.videos_ai_response or {}
+        observational_probability = videos_ai_response.get('fused_probability')
+        if observational_probability is None:
+            return Response({
+                'error': 'fused_probability is missing. Complete ASD videos processing first.'
+            }, status=400)
+
+        report.eeg_vhdr = eeg_vhdr
+        report.eeg_vmrk = eeg_vmrk
+        report.eeg_data = eeg_data
+        report.physiology_ai_response = None
+        report.save(update_fields=[
+            'eeg_vhdr',
+            'eeg_vmrk',
+            'eeg_data',
+            'physiology_ai_response',
+            'updated_at',
+        ])
 
         task = process_asd_physiology_task.delay(str(report.id))
 
@@ -182,7 +203,7 @@ class ADHDDiagnosisView(APIView):
         if isinstance(child, Response):
             return child
 
-        eeg_file = request.FILES.get('eeg_file')
+        eeg_file = request.FILES.get('eeg_csv')
         if not eeg_file:
             return Response({'error': 'EEG file is required.'}, status=400)
         
@@ -219,3 +240,23 @@ class ADHDDiagnosisView(APIView):
         if request.user.role == 'doctor':
             return Response(ADHDReportDoctorSerializer(report).data)
         return Response(ADHDReportParentSerializer(report).data)
+
+
+class TaskStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id):
+        task = AsyncResult(task_id)
+
+        response = {
+            "task_id": task_id,
+            "status": task.status,
+        }
+
+        if task.successful():
+            response["result"] = task.result
+
+        elif task.failed():
+            response["error"] = str(task.result)
+
+        return Response(response)

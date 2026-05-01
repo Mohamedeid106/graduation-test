@@ -15,8 +15,11 @@ class ASDReport(models.Model):
     questionnaire_answers = models.JSONField(null=True, blank=True)
     videos_ai_response = models.JSONField(null=True, blank=True)   # AI result from videos+questionnaire
 
-    # ── Physiology file (Page 2 — completely independent) ──────
+    # ── Physiology files (Page 2 — depends on observational probability) ──
     physiology_file = models.FileField(upload_to='asd_physiology/', null=True, blank=True)
+    eeg_vhdr = models.FileField(upload_to='asd_physiology/vhdr/', null=True, blank=True)
+    eeg_vmrk = models.FileField(upload_to='asd_physiology/vmrk/', null=True, blank=True)
+    eeg_data = models.FileField(upload_to='asd_physiology/data/', null=True, blank=True)
     physiology_ai_response = models.JSONField(null=True, blank=True)  # AI result from physiology only
 
     # ── Final combined output (set when both are done, or individually) ──

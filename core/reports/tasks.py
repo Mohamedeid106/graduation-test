@@ -2,7 +2,6 @@ import requests as http_requests
 from requests.exceptions import ConnectionError, Timeout
 from celery import shared_task
 from django.conf import settings
-
 from errors.models import SystemErrorLog
 from .models import ASDReport, ADHDReport
 
@@ -16,10 +15,10 @@ def process_asd_videos_task(self, report_id):
             ai_response = http_requests.post(
                 f"{settings.AI_SERVER_URL}/predict/observational",
                 files={
-                    "motion_video": motion_file,
+                    "behavioral_video": motion_file,
                     "emotion_video": emotion_file,
                 },
-                data={"questionnaire": report.questionnaire_answers},
+                data={"questionnaire_data": report.questionnaire_answers},
                 timeout=(60, 1000),
             )
 
@@ -28,7 +27,7 @@ def process_asd_videos_task(self, report_id):
 
         report.videos_ai_response = ai_data
         report.risk_level = ai_data.get("risk_level", "low")
-        report.recommendation = ai_data.get("recommendation", "")
+        report.recommendation = ai_data.get("risk_message", "")
         report.save(update_fields=[
             "videos_ai_response",
             "risk_level",
@@ -70,11 +69,25 @@ def process_asd_physiology_task(self, report_id):
     report = ASDReport.objects.get(id=report_id)
 
     try:
-        with open(report.physiology_file.path, "rb") as physiology_file:
+        videos_ai_response = report.videos_ai_response or {}
+        if videos_ai_response == {}:
+            raise ValueError("videos_ai_response is empty. ASD videos must be processed before physiology files.")
+        observational_probability = videos_ai_response.get('fused_probability')
+        if observational_probability is None:
+            raise ValueError("fused_probability is missing from videos_ai_response.")
+
+        with open(report.eeg_vhdr.path, "rb") as eeg_vhdr, open(report.eeg_vmrk.path, "rb") as eeg_vmrk, open(report.eeg_data.path, "rb") as eeg_data:
             ai_response = http_requests.post(
                 f"{settings.AI_SERVER_URL}/predict/physiology",
-                files={"physiology_file": physiology_file},
-                timeout=(60, 600),
+                files={
+                    "eeg_vhdr": eeg_vhdr,
+                    "eeg_vmrk": eeg_vmrk,
+                    "eeg_data": eeg_data,
+                },
+                data={
+                    "observational_probability": str(observational_probability),
+                },
+                timeout=(60, 1000),
             )
 
         ai_response.raise_for_status()
@@ -123,8 +136,8 @@ def process_adhd_task(self, report_id):
         with open(report.eeg_file.path, "rb") as eeg_file:
             ai_response = http_requests.post(
                 f"{settings.AI_SERVER_URL}/predict/adhd",
-                files={"eeg_file": eeg_file},
-                timeout=(60, 600),
+                files={"eeg_csv": eeg_file},
+                timeout=(60, 1000),
             )
 
         ai_response.raise_for_status()
@@ -132,7 +145,7 @@ def process_adhd_task(self, report_id):
 
         report.ai_full_response = ai_data
         report.risk_level = ai_data.get("risk_level", "low")
-        report.recommendation = ai_data.get("recommendation", "")
+        report.recommendation = ai_data.get("risk_message", "")
         report.save(update_fields=[
             "ai_full_response",
             "risk_level",
