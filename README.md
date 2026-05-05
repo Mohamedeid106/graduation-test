@@ -556,14 +556,13 @@ erDiagram
 
     USER {
         uuid id PK
+        string email
         string password
-        datetime last_login
-        boolean is_superuser
         string first_name
         string last_name
-        string email UK
         string phone_number
         string role
+        boolean is_superuser
         boolean is_active
         boolean is_staff
         datetime created_at
