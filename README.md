@@ -556,7 +556,7 @@ erDiagram
 
     USER {
         uuid id PK
-        string email
+        string email UK
         string password
         string first_name
         string last_name
