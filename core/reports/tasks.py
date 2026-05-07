@@ -2,8 +2,39 @@ import requests as http_requests
 from requests.exceptions import ConnectionError, Timeout
 from celery import shared_task
 from django.conf import settings
+
 from errors.models import SystemErrorLog
 from .models import ASDReport, ADHDReport
+
+
+AI_SERVER_UNAVAILABLE = "AI_SERVER_UNAVAILABLE"
+AI_SERVER_REQUEST_ERROR = "AI_SERVER_REQUEST_ERROR"
+AI_SERVER_ERROR = "AI_SERVER_ERROR"
+
+
+def _set_report_status(report, status_field, error_field, status, error_code=None):
+    setattr(report, status_field, status)
+    setattr(report, error_field, error_code)
+    report.save(update_fields=[status_field, error_field, "updated_at"])
+
+
+def _retry_or_mark_unavailable(task, report, status_field, error_field, exc, report_type):
+    if task.request.retries >= task.max_retries:
+        _set_report_status(
+            report,
+            status_field,
+            error_field,
+            "failed",
+            AI_SERVER_UNAVAILABLE,
+        )
+        return {
+            "report_id": str(report.id),
+            "type": report_type,
+            "status": "failed",
+            "error": AI_SERVER_UNAVAILABLE,
+        }
+
+    raise task.retry(exc=exc, countdown=60)
 
 
 @shared_task(bind=True, max_retries=3)
@@ -26,12 +57,16 @@ def process_asd_videos_task(self, report_id):
         ai_data = ai_response.json()
 
         report.videos_ai_response = ai_data
-        report.risk_level = ai_data.get("risk_level", "low")
-        report.recommendation = ai_data.get("risk_message", "")
+        report.videos_risk_level = ai_data.get("risk_level", "low")
+        report.videos_recommendation = ai_data.get("risk_message", "")
+        report.report_vid_status = "completed"
+        report.report_vid_error = None
         report.save(update_fields=[
             "videos_ai_response",
-            "risk_level",
-            "recommendation",
+            "videos_risk_level",
+            "videos_recommendation",
+            "report_vid_status",
+            "report_vid_error",
             "updated_at",
         ])
 
@@ -46,13 +81,26 @@ def process_asd_videos_task(self, report_id):
             error_type="AI_SERVER_CONNECTION_ERROR",
             message=str(e),
         )
-
-        raise self.retry(exc=e, countdown=60)
+        return _retry_or_mark_unavailable(
+            self,
+            report,
+            "report_vid_status",
+            "report_vid_error",
+            e,
+            "asd_videos",
+        )
 
     except http_requests.RequestException as e:
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_REQUEST_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_vid_status",
+            "report_vid_error",
+            "failed",
+            AI_SERVER_REQUEST_ERROR,
         )
         raise
 
@@ -60,6 +108,13 @@ def process_asd_videos_task(self, report_id):
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_vid_status",
+            "report_vid_error",
+            "failed",
+            AI_SERVER_ERROR,
         )
         raise
 
@@ -94,8 +149,16 @@ def process_asd_physiology_task(self, report_id):
         ai_data = ai_response.json()
 
         report.physiology_ai_response = ai_data
+        report.physiology_risk_level = ai_data.get("risk_level", "low")
+        report.physiology_recommendation = ai_data.get("risk_message", "")
+        report.report_phy_status = "completed"
+        report.report_phy_error = None
         report.save(update_fields=[
             "physiology_ai_response",
+            "physiology_risk_level",
+            "physiology_recommendation",
+            "report_phy_status",
+            "report_phy_error",
             "updated_at",
         ])
 
@@ -111,12 +174,26 @@ def process_asd_physiology_task(self, report_id):
             message=str(e),
         )
 
-        raise self.retry(exc=e, countdown=60)
+        return _retry_or_mark_unavailable(
+            self,
+            report,
+            "report_phy_status",
+            "report_phy_error",
+            e,
+            "asd_physiology",
+        )
 
     except http_requests.RequestException as e:
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_REQUEST_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_phy_status",
+            "report_phy_error",
+            "failed",
+            AI_SERVER_REQUEST_ERROR,
         )
         raise
 
@@ -124,6 +201,13 @@ def process_asd_physiology_task(self, report_id):
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_phy_status",
+            "report_phy_error",
+            "failed",
+            AI_SERVER_ERROR,
         )
         raise
 
@@ -146,10 +230,14 @@ def process_adhd_task(self, report_id):
         report.ai_full_response = ai_data
         report.risk_level = ai_data.get("risk_level", "low")
         report.recommendation = ai_data.get("risk_message", "")
+        report.report_status = "completed"
+        report.report_error = None
         report.save(update_fields=[
             "ai_full_response",
             "risk_level",
             "recommendation",
+            "report_status",
+            "report_error",
             "updated_at",
         ])
 
@@ -165,12 +253,26 @@ def process_adhd_task(self, report_id):
             message=str(e),
         )
 
-        raise self.retry(exc=e, countdown=60)
+        return _retry_or_mark_unavailable(
+            self,
+            report,
+            "report_status",
+            "report_error",
+            e,
+            "adhd",
+        )
 
     except http_requests.RequestException as e:
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_REQUEST_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_status",
+            "report_error",
+            "failed",
+            AI_SERVER_REQUEST_ERROR,
         )
         raise
 
@@ -178,5 +280,12 @@ def process_adhd_task(self, report_id):
         SystemErrorLog.objects.create(
             error_type="AI_SERVER_ERROR",
             message=str(e),
+        )
+        _set_report_status(
+            report,
+            "report_status",
+            "report_error",
+            "failed",
+            AI_SERVER_ERROR,
         )
         raise

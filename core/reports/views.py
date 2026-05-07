@@ -1,6 +1,5 @@
 import requests as http_requests
 from django.db.models import Q
-from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -13,7 +12,6 @@ from .serializers import (
     ADHDReportDoctorSerializer, ADHDReportParentSerializer,
 )
 from errors.models import SystemErrorLog
-from celery.result import AsyncResult
 from rest_framework.permissions import IsAuthenticated
 from .tasks import (
     process_asd_videos_task,
@@ -25,11 +23,61 @@ ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-msv
 ALLOWED_EEG_TYPES   = ['text/csv', 'application/octet-stream', 'application/vnd.ms-excel',
                         'text/plain', 'application/x-edf', 'application/edf']
 
+MALWARE_GUARD_URL = 'https://malwareguard-one.vercel.app/api/partner/analyze-generic'
+MALWARE_GUARD_API_KEY = 'mg-partner-key-2026'
+
 # EEG/physiology files are commonly .edf, .csv, .bdf, .txt — adjust to your AI server's expectation
 def validate_file_type(file, allowed_types, label):
     """Returns an error string if the file content-type is not in allowed_types, else None."""
     if file.content_type not in allowed_types:
         return f"'{label}' must be one of: {', '.join(allowed_types)}. Got: {file.content_type}"
+    return None
+
+def scan_files_or_response(files):
+    for label, uploaded_file in files.items():
+        uploaded_file.seek(0)
+
+        try:
+            guard_response = http_requests.post(
+                MALWARE_GUARD_URL,
+                headers={'X-API-Key': MALWARE_GUARD_API_KEY},
+                files={
+                    'file': (
+                        uploaded_file.name,
+                        uploaded_file,
+                        uploaded_file.content_type,
+                    )
+                },
+                timeout=(120),
+            )
+            guard_response.raise_for_status()
+            guard_data = guard_response.json()
+            print(f'Malware Guard response for {label}: {guard_data}')
+        except Exception as e:
+            SystemErrorLog.objects.create(
+                error_type='MALWARE_GUARD_ERROR',
+                message=str(e),
+            )
+            print(f'Error calling Malware Guard for {label}: {e}')
+            return Response({
+                'error': 'File security scan unavailable. Please try again later.',
+            }, status=503)
+        finally:
+            uploaded_file.seek(0)
+
+        if guard_data.get('is_malicious') is True:
+            return Response({
+                'error': f'{label} failed security scan. File is malicious.',
+                'scan_result': guard_data,
+            }, status=400)
+
+        if guard_data.get('is_malicious') is not False:
+            print(f'Unexpected Malware Guard response for {label}: {guard_data}')
+            return Response({
+                'error': 'Invalid malware guard response.',
+                'scan_result': guard_data,
+            }, status=503)
+
     return None
 
 # Shared helper — used by all views in this file
@@ -83,6 +131,13 @@ class ASDVideosView(APIView):
         err = validate_file_type(emotion_video, ALLOWED_VIDEO_TYPES, 'emotion_video')
         if err: return Response({'error': err}, status=400)
 
+        scan_result = scan_files_or_response({
+            'behavioral_video': motion_video,
+            'emotion_video': emotion_video,
+        })
+        if isinstance(scan_result, Response):
+            return scan_result
+
         # Save videos to disk.
         # update_or_create means: if an ASDReport for this child already exists (e.g. physiology was uploaded first), update it. Otherwise create a new one.
         report, _ = ASDReport.objects.update_or_create(
@@ -91,6 +146,11 @@ class ASDVideosView(APIView):
                 "motion_video": motion_video,
                 "emotion_video": emotion_video,
                 "questionnaire_answers": questionnaire,
+                "videos_ai_response": None,
+                "videos_risk_level": None,
+                "videos_recommendation": None,
+                "report_vid_status": "processing",
+                "report_vid_error": None,
             },
         )
 
@@ -161,11 +221,19 @@ class ASDPhysiologyView(APIView):
         report.eeg_vmrk = eeg_vmrk
         report.eeg_data = eeg_data
         report.physiology_ai_response = None
+        report.physiology_risk_level = None
+        report.physiology_recommendation = None
+        report.report_phy_status = "processing"
+        report.report_phy_error = None
         report.save(update_fields=[
             'eeg_vhdr',
             'eeg_vmrk',
             'eeg_data',
             'physiology_ai_response',
+            'physiology_risk_level',
+            'physiology_recommendation',
+            'report_phy_status',
+            'report_phy_error',
             'updated_at',
         ])
 
@@ -211,10 +279,21 @@ class ADHDDiagnosisView(APIView):
         err = validate_file_type(eeg_file, ALLOWED_EEG_TYPES, 'eeg_file')
         if err: return Response({'error': err}, status=400)
 
+        scan_result = scan_files_or_response({
+            'eeg_csv': eeg_file,
+        })
+        if isinstance(scan_result, Response):
+            return scan_result
+
         report, _ = ADHDReport.objects.update_or_create(
             child=child,
             defaults={
                 "eeg_file": eeg_file,
+                "ai_full_response": None,
+                "risk_level": None,
+                "recommendation": None,
+                "report_status": "processing",
+                "report_error": None,
             },
         )
 
@@ -240,23 +319,3 @@ class ADHDDiagnosisView(APIView):
         if request.user.role == 'doctor':
             return Response(ADHDReportDoctorSerializer(report).data)
         return Response(ADHDReportParentSerializer(report).data)
-
-
-class TaskStatusView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, task_id):
-        task = AsyncResult(task_id)
-
-        response = {
-            "task_id": task_id,
-            "status": task.status,
-        }
-
-        if task.successful():
-            response["result"] = task.result
-
-        elif task.failed():
-            response["error"] = str(task.result)
-
-        return Response(response)

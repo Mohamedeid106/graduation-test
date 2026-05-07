@@ -78,7 +78,7 @@ class AdminDashboardView(APIView):
             'average_child_age': average_child_age,
             'total_asd_reports': ASDReport.objects.count(),
             'total_adhd_reports': ADHDReport.objects.count(),
-            'asd_high_risk_count': ASDReport.objects.filter(risk_level='high').count(),
+            'asd_high_risk_count': ASDReport.objects.filter(videos_risk_level='high').count(),
             'adhd_high_risk_count': ADHDReport.objects.filter(risk_level='high').count(),
         }
         return Response(data)

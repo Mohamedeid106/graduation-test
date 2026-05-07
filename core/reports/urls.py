@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import ASDVideosView, ASDPhysiologyView, ADHDDiagnosisView, TaskStatusView
+from .views import ASDVideosView, ASDPhysiologyView, ADHDDiagnosisView
 
 urlpatterns = [
     # ASD: two separate pages, two separate endpoints
@@ -8,6 +8,4 @@ urlpatterns = [
 
     # ADHD: unchanged
     path('adhd/<str:child_id>/', ADHDDiagnosisView.as_view()),
-    # Task status endpoint
-    path('tasks/<str:task_id>/', TaskStatusView.as_view()),
 ]
