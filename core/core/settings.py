@@ -18,16 +18,34 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name, default=None):
+    value = os.environ.get(name)
+    if not value:
+        return default or []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--#w@xc6pbvy5&j@%i=^s4!dxzuy=7_ah7q0!%)$dks6qp&s#!l'
+SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-dev-only-change-me")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool("DEBUG", default=os.environ.get("RAILWAY_ENVIRONMENT") is None)
 
-ALLOWED_HOSTS = ['localhost','127.0.0.1','stabilize-silver-galley.ngrok-free.dev']
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    ["localhost", "127.0.0.1", ".up.railway.app", "stabilize-silver-galley.ngrok-free.dev"],
+)
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # Application definition
@@ -56,6 +74,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -91,11 +110,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'smart_detection_db',  # The name of the database you created in Postgres
-        'USER': 'postgres',            # Your Postgres username (often 'postgres' by default)
-        'PASSWORD': 'mh6904',   # The password for that specific database user
-        'HOST': 'localhost',           # 'localhost' or '127.0.0.1' if running on your own machine
-        'PORT': '5432',
+        'NAME': os.environ.get('PGDATABASE', 'smart_detection_db'),
+        'USER': os.environ.get('PGUSER', 'postgres'),
+        'PASSWORD': os.environ.get('PGPASSWORD', ''),
+        'HOST': os.environ.get('PGHOST', 'localhost'),
+        'PORT': os.environ.get('PGPORT', '5432'),
     }
 }
 
@@ -163,20 +182,30 @@ PHONENUMBER_DEFAULT_REGION = "EG"
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CORS_ALLOWED_ORIGINS = env_list(
+    "CORS_ALLOWED_ORIGINS",
+    ["http://localhost:3000", "http://127.0.0.1:3000"],
+)
 
-CSRF_TRUSTED_ORIGINS = [
-    'https://stabilize-silver-galley.ngrok-free.dev', # Must include the https://
-]
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    ["https://*.up.railway.app", "https://stabilize-silver-galley.ngrok-free.dev"],
+)
 
 CORS_ALLOW_HEADERS = [
     "accept",
@@ -193,10 +222,10 @@ CORS_ALLOW_HEADERS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-AI_SERVER_URL = 'https://ocelot-delicate-logically.ngrok-free.app'
+AI_SERVER_URL = os.environ.get('AI_SERVER_URL', 'https://ocelot-delicate-logically.ngrok-free.app')
 
 # ── Celery ────────────────────────────────────────────────────────────────────
-CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
@@ -207,13 +236,13 @@ CELERY_RESULT_EXTENDED = True
 
 # ── Email Settings ───────────────────────────────────────────────────────────
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'smart.detection.info@gmail.com'
-EMAIL_HOST_PASSWORD = 'pbjzioowvcoaoira'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # Verifalia API credentials (use environment variables for security)
-VERIFALIA_USERNAME = "20221276@science.helwan.edu.eg"
-VERIFALIA_PASSWORD = "Mh9062004"
+VERIFALIA_USERNAME = os.environ.get("VERIFALIA_USERNAME", "")
+VERIFALIA_PASSWORD = os.environ.get("VERIFALIA_PASSWORD", "")

@@ -657,6 +657,7 @@ Base route groups:
 ### User Profile Update Rules
 
 - `first_name`, `last_name`, and `phone_number` can be updated directly
+- `phone_number` is validated with Egypt (`EG`) as the default region and stored in E.164 format, e.g. `01012345678` becomes `+201012345678`
 - changing `email` requires `current_password`
 - changing password requires:
   - `current_password`
