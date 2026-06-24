@@ -1,8 +1,8 @@
+import json
 import requests as http_requests
 from requests.exceptions import ConnectionError, Timeout
 from celery import shared_task
 from django.conf import settings
-
 from errors.models import SystemErrorLog
 from .models import ASDReport, ADHDReport
 
@@ -49,7 +49,7 @@ def process_asd_videos_task(self, report_id):
                     "behavioral_video": motion_file,
                     "emotion_video": emotion_file,
                 },
-                data={"questionnaire_data": report.questionnaire_answers},
+                data={"questionnaire_data": json.dumps(report.questionnaire_answers)},
                 timeout=(60, 1000),
             )
 

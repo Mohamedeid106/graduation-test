@@ -1,6 +1,21 @@
 from rest_framework import serializers
 from .models import ChildProfile, DoctorChildAccess
+from users.models import User
 from datetime import date
+from users.validators import validate_meaningful_text, validate_person_name
+
+
+def calculate_age(dob):
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+def calculate_age_months(dob):
+    today = date.today()
+    months = (today.year - dob.year) * 12 + today.month - dob.month
+    if today.day < dob.day:
+        months -= 1
+    return max(months, 0)
 
 
 class BasicInfoSerializer(serializers.Serializer):
@@ -10,6 +25,12 @@ class BasicInfoSerializer(serializers.Serializer):
     age = serializers.IntegerField(min_value=0, required=True)
     gender = serializers.ChoiceField(choices=['male', 'female'], required=True)
     birth_order = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
+    def validate_full_name(self, value):
+        return validate_person_name(value)
+
+    def validate_birth_order(self, value):
+        return validate_meaningful_text(value, "Birth order", allow_blank=True)
 
 
 class DevMilestonesSerializer(serializers.Serializer):
@@ -71,12 +92,54 @@ class ChildProfileSerializer(serializers.ModelSerializer):
         if value and 'date_of_birth' in value:
             if isinstance(value['date_of_birth'], date):
                 value['date_of_birth'] = value['date_of_birth'].isoformat()
+
+        # Validate that age matches date_of_birth if both are provided
+        if value and 'age' in value:
+            dob = value.get("date_of_birth")
+            age = value.get("age")
+
+            if isinstance(dob, str):
+                dob = date.fromisoformat(dob)
+
+            expected_age = calculate_age(dob)
+
+            if age != expected_age:
+                raise serializers.ValidationError({
+                    "basic_info": {
+                        "age": f"Age must match date_of_birth. Expected age is {expected_age}."
+                    }
+                })
+
         return value
 
     def validate_dev_milestones(self, value):
         """Validate dev_milestones structure"""
         if value and not isinstance(value, dict):
             raise serializers.ValidationError("dev_milestones must be a dictionary")
+        
+        # Validate that developmental milestones ages are not greater than child age
+        if value and 'age_of_fw' in value and 'age_of_sw' in value:
+            age_of_fw = value.get('age_of_fw')
+            age_of_sw = value.get('age_of_sw')
+            dob = self.initial_data.get('basic_info', {}).get('date_of_birth')
+            if isinstance(dob, str):
+                dob = date.fromisoformat(dob)
+            
+            child_age_months = calculate_age_months(dob)
+            if age_of_fw is not None and age_of_fw > child_age_months:
+                raise serializers.ValidationError({
+                    "dev_milestones": {
+                        "age_of_fw": "Age of first word cannot be greater than child age."
+                    }
+                })
+
+            if age_of_sw is not None and age_of_sw > child_age_months:
+                raise serializers.ValidationError({
+                    "dev_milestones": {
+                        "age_of_sw": "Age of start walking cannot be greater than child age."
+                    }
+                })
+
         return value
 
     def validate_med_history(self, value):
@@ -104,6 +167,30 @@ class ChildProfileSerializer(serializers.ModelSerializer):
                 validated_data[field] = {**current_value, **new_value}
 
         return super().update(instance, validated_data)
+
+
+class DoctorEmailSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'name', 'email', 'last_login']
+
+    def get_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}"
+
+
+class SendChildAccessSerializer(serializers.Serializer):
+    doctor_email = serializers.EmailField()
+
+    def validate_doctor_email(self, value):
+        try:
+            doctor = User.objects.get(email=value, role='doctor', is_active=True)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("No active doctor found with this email.")
+
+        self.context['doctor'] = doctor
+        return value
 
 
 class ChildAccessSerializer(serializers.Serializer):

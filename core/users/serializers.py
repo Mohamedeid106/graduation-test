@@ -1,21 +1,75 @@
 from rest_framework import serializers
 from .models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+import phonenumbers
+from phonenumber_field.serializerfields import PhoneNumberField
+from .validators import validate_email_format, validate_email_deliverability, validate_person_name
 
-class RegisterSerializer(serializers.ModelSerializer):
+
+class PhoneNumberValidationMixin:
+    def validate_phone_number(self, value):
+        if phonenumbers.region_code_for_number(value) == "EG":
+            number_type = phonenumbers.number_type(value)
+
+            if number_type != phonenumbers.PhoneNumberType.MOBILE:
+                raise serializers.ValidationError(
+                    "Enter a valid Egyptian mobile number."
+                )
+
+        return value
+
+
+class RegisterSerializer(PhoneNumberValidationMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirmation = serializers.CharField(write_only=True)
+    phone_number = PhoneNumberField()
 
     class Meta:
         model = User
         fields = ['first_name', 'last_name', 'email', 'password',
                   'password_confirmation', 'phone_number', 'role']
 
-    # Custom validation to ensure passwords match and prevent self-registration as admin
+    def validate_first_name(self, value):
+        return validate_person_name(value)
+
+    def validate_last_name(self, value):
+        return validate_person_name(value)
+    
+    def validate_email(self, value):
+        return validate_email_format(value)
+    
+    def validate_role(self, value):
+        if value == 'admin':
+            raise serializers.ValidationError("Cannot self-register as Admin.")
+        return value
+
+    # Custom validation to ensure passwords match, is valid, and prevent self-registration as admin
     def validate(self, data):
         if data['password'] != data['password_confirmation']:
-            raise serializers.ValidationError("Passwords do not match.")
-        if data['role'] == 'admin':
-            raise serializers.ValidationError("Cannot self-register as Admin.")
+            raise serializers.ValidationError({'password_confirmation': "Passwords do not match."})
+        
+        if User.objects.filter(email=data['email']).exists():
+            raise serializers.ValidationError({'email': 'This email is already in use.'})
+        
+        user = User(
+            email=data.get('email'),
+            first_name=data.get('first_name'),
+            last_name=data.get('last_name'),
+            phone_number=data.get('phone_number'),
+            role=data.get('role'),
+        )
+
+        try:
+            validate_password(data['password'], user=user)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({'password': list(e.messages)})
+        
+        try:
+            data['email'] = validate_email_deliverability(data['email'])
+        except serializers.ValidationError as e:
+            raise serializers.ValidationError({'email': e.detail})
+
         return data
 
     # Override create to handle password hashing and remove password_confirmation from the validated data
@@ -31,17 +85,27 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = ['id', 'first_name', 'last_name', 'email', 'phone_number', 'role', 'created_at']
 
 
-class UserProfileUpdateSerializer(serializers.ModelSerializer):
+class UserProfileUpdateSerializer(PhoneNumberValidationMixin, serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
     new_password = serializers.CharField(write_only=True, min_length=8, required=False)
     new_password_confirmation = serializers.CharField(write_only=True, required=False)
     current_password = serializers.CharField(write_only=True, required=False)
+    phone_number = PhoneNumberField(required=False)
 
     # Only allow updating certain fields and handle password/email changes with validation
     class Meta:
         model = User
         fields = ['first_name', 'last_name', 'phone_number', 'email',
                   'current_password', 'new_password', 'new_password_confirmation']
+
+    def validate_first_name(self, value):
+        return validate_person_name(value)
+
+    def validate_last_name(self, value):
+        return validate_person_name(value)
+    
+    def validate_email(self, value):
+        return validate_email_format(value)
 
     def validate(self, data):
         # Get the user instance from the serializer context
@@ -61,14 +125,19 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 
         # If changing password, confirmation must match and it must not be the same as current password
         if 'new_password' in data:
-            if data.get('new_password') != data.get('new_password_confirmation'):
-                raise serializers.ValidationError(
-                    {'new_password_confirmation': 'Passwords do not match.'}
-                )
-            
             if user.check_password(data['new_password']):
                 raise serializers.ValidationError(
                     {'new_password': 'This is already your current password.'}
+                )
+            
+            try:
+                validate_password(data['new_password'], user=user)
+            except DjangoValidationError as e:
+                raise serializers.ValidationError({'new_password': list(e.messages)})
+            
+            if data.get('new_password') != data.get('new_password_confirmation'):
+                raise serializers.ValidationError(
+                    {'new_password_confirmation': 'Passwords do not match.'}
                 )
 
         # If changing email, it must not already exist and it must not be the same as current email
@@ -82,6 +151,11 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {'email': 'This is already your current email.'}
                 )
+            
+            try:
+                data['email'] = validate_email_deliverability(data['email'])
+            except serializers.ValidationError as e:
+                raise serializers.ValidationError({'email': e.detail})
 
         return data
 

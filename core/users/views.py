@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from .serializers import RegisterSerializer, UserProfileSerializer, UserProfileUpdateSerializer
 from .models import User
 from .permissions import IsAdmin
@@ -33,6 +34,8 @@ class LoginView(APIView):
 
         # If authentication is successful, generate JWT tokens and return user info
         if user:
+            update_last_login(None, user)
+
             refresh = RefreshToken.for_user(user)
             return Response({
                 'access': str(refresh.access_token),

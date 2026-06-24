@@ -1,11 +1,14 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import Q
+from django.core.mail import send_mail
+from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
+from django.db.models import Q
 from .models import ChildProfile, DoctorChildAccess, generate_child_password
-from .serializers import ChildProfileSerializer, ChildAccessSerializer, ClinicNoteSerializer
-from users.permissions import IsDoctorOrParent, IsDoctor
+from .serializers import ChildProfileSerializer, ChildAccessSerializer, ClinicNoteSerializer, DoctorEmailSerializer, SendChildAccessSerializer
+from users.permissions import IsDoctorOrParent, IsDoctor, IsParent
+from users.models import User
 
 class ChildProfileListCreateView(APIView):
     permission_classes = [IsDoctorOrParent]
@@ -99,6 +102,88 @@ class ChildProfileDetailView(APIView):
         child_name = child.basic_info.get('full_name', child_id) if child.basic_info else child_id
         child.delete()
         return Response({'message': f'Child profile "{child_name}" deleted.'}, status=200)
+    
+
+class LoggedInDoctorListView(APIView):
+    permission_classes = [IsParent]
+
+    def get(self, request):
+        doctors = User.objects.filter(
+            role='doctor',
+            is_active=True,
+            last_login__isnull=False,
+        ).order_by('email')
+
+        serializer = DoctorEmailSerializer(doctors, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SendChildAccessToDoctorView(APIView):
+    permission_classes = [IsParent]
+
+    def post(self, request, child_id):
+        serializer = SendChildAccessSerializer(data=request.data, context={'request': request})
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        doctor = serializer.context['doctor']
+
+        child = ChildProfile.objects.filter(
+            child_id=child_id,
+            created_by=request.user,
+        ).first()
+
+        if not child:
+            return Response(
+                {
+                    'error': 'Child not found or you are not the creator of this child profile.'
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if DoctorChildAccess.objects.filter(doctor=doctor, child=child).exists():
+            return Response(
+                {
+                    'error': 'This doctor already has access to this child profile.'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        DoctorChildAccess.objects.create(
+            doctor=doctor,
+            child=child,
+        )
+
+        child_name = child.get_full_name()
+        parent_name = f"{request.user.first_name} {request.user.last_name}"
+
+        subject = f"Access granted to child profile: {child_name}"
+
+        message = (
+            f"Hello Dr. {doctor.first_name} {doctor.last_name},\n\n"
+            f"{parent_name} has granted you access to a child profile.\n\n"
+            f"Child name: {child_name}\n"
+            f"Child ID: {child.child_id}\n\n"
+            f"Please log in to the website to view this child profile.\n\n"
+            f"Thank you."
+        )
+
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[doctor.email],
+            fail_silently=False,
+        )
+
+        return Response(
+            {
+                'message': 'Doctor access granted and email sent successfully.'
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class DoctorAccessView(APIView):
     permission_classes = [IsDoctor]
@@ -128,6 +213,7 @@ class DoctorAccessView(APIView):
             child_name = child.basic_info['full_name']
         
         return Response({'message': f'Access granted to {child_name}.'})
+    
 
 class ClinicNoteView(APIView):
     permission_classes = [IsDoctor]

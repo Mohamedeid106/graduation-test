@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_password_validators',
+    "phonenumber_field",
     # Third-party
     'rest_framework',
     'corsheaders',
@@ -130,6 +132,16 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
+    {
+        'NAME': 'django_password_validators.password_character_requirements.password_validation.PasswordCharacterValidator',
+        'OPTIONS': {
+            'min_length_digit': 1,
+            'min_length_special': 1,
+            'min_length_lower': 1,
+            'min_length_upper': 1,
+            'min_length_alpha': 0,
+        }
+    },
 ]
 
 
@@ -144,6 +156,8 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Phone number validation settings
+PHONENUMBER_DEFAULT_REGION = "EG"
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
@@ -156,7 +170,7 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000", # Or whatever port your React app runs on
+    "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
@@ -190,3 +204,16 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_RESULT_EXTENDED = True
+
+# ── Email Settings ───────────────────────────────────────────────────────────
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'smart.detection.info@gmail.com'
+EMAIL_HOST_PASSWORD = 'pbjzioowvcoaoira'
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# Verifalia API credentials (use environment variables for security)
+VERIFALIA_USERNAME = "20221276@science.helwan.edu.eg"
+VERIFALIA_PASSWORD = "Mh9062004"

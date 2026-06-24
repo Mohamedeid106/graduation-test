@@ -18,11 +18,13 @@ from .tasks import (
     process_asd_physiology_task,
     process_adhd_task,
 )
+import json
+from json import JSONDecodeError
 
 ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska']
 ALLOWED_EEG_TYPES   = ['text/csv', 'application/octet-stream', 'application/vnd.ms-excel',
                         'text/plain', 'application/x-edf', 'application/edf']
-
+QUESTIONNAIRE_REQUIRED_COUNT = 10
 MALWARE_GUARD_URL = 'https://malwareguard-one.vercel.app/api/partner/analyze-generic'
 MALWARE_GUARD_API_KEY = 'mg-partner-key-2026'
 
@@ -32,6 +34,37 @@ def validate_file_type(file, allowed_types, label):
     if file.content_type not in allowed_types:
         return f"'{label}' must be one of: {', '.join(allowed_types)}. Got: {file.content_type}"
     return None
+
+def validate_questionnaire_data(raw_questionnaire):
+    if isinstance(raw_questionnaire, str):
+        try:
+            questionnaire = json.loads(raw_questionnaire)
+        except JSONDecodeError:
+            return None, "questionnaire_data must be valid JSON."
+    else:
+        questionnaire = raw_questionnaire
+
+    if not isinstance(questionnaire, (list, dict)):
+        return None, "questionnaire_data must be a JSON list or object."
+
+    if len(questionnaire) != QUESTIONNAIRE_REQUIRED_COUNT:
+        return None, (
+            f"questionnaire_data must contain exactly "
+            f"{QUESTIONNAIRE_REQUIRED_COUNT} answers."
+        )
+
+    answers = questionnaire.values() if isinstance(questionnaire, dict) else questionnaire
+
+    empty_answers = [
+        answer for answer in answers
+        if answer is None or answer == ""
+    ]
+
+    if empty_answers:
+        return None, "All questionnaire answers are required."
+
+    return questionnaire, None
+
 
 def scan_files_or_response(files):
     for label, uploaded_file in files.items():
@@ -124,6 +157,11 @@ class ASDVideosView(APIView):
         # All three are required for the AI server to process. If any is missing, return an error.
         if not all([motion_video, emotion_video, questionnaire]):
             return Response({'error': 'behavioral_video, emotion_video, and questionnaire_data are all required.'}, status=400)
+        
+        # Validate questionnaire data format and content before sending to AI server
+        questionnaire, questionnaire_error = validate_questionnaire_data(questionnaire)
+        if questionnaire_error:
+            return Response({'error': questionnaire_error}, status=400)
         
         # Validate file types before sending to AI server
         err = validate_file_type(motion_video, ALLOWED_VIDEO_TYPES, 'motion_video')
