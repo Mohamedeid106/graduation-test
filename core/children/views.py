@@ -9,6 +9,9 @@ from .models import ChildProfile, DoctorChildAccess, generate_child_password
 from .serializers import ChildProfileSerializer, ChildAccessSerializer, ClinicNoteSerializer, DoctorEmailSerializer, SendChildAccessSerializer
 from users.permissions import IsDoctorOrParent, IsDoctor, IsParent
 from users.models import User
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ChildProfileListCreateView(APIView):
     permission_classes = [IsDoctorOrParent]
@@ -169,13 +172,26 @@ class SendChildAccessToDoctorView(APIView):
             f"Thank you."
         )
 
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[doctor.email],
-            fail_silently=False,
-        )
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[doctor.email],
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send child access email for child_id=%s to doctor_id=%s",
+                child.child_id,
+                doctor.id,
+            )
+            return Response(
+                {
+                    'message': 'Doctor access granted, but the email could not be sent.'
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         return Response(
             {
