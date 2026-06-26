@@ -26,7 +26,7 @@ ALLOWED_EEG_TYPES   = ['text/csv', 'application/octet-stream', 'application/vnd.
                         'text/plain', 'application/x-edf', 'application/edf']
 QUESTIONNAIRE_REQUIRED_COUNT = 10
 MALWARE_GUARD_URL = 'https://malwareguard-one.vercel.app/api/partner/analyze-generic'
-MALWARE_GUARD_API_KEY = 'mg-partner-key-2026'
+MALWARE_GUARD_API_KEY = 'mg_partner_6d9a678aa8168d59c0541d02f3bb58087bf9e882'
 
 # EEG/physiology files are commonly .edf, .csv, .bdf, .txt — adjust to your AI server's expectation
 def validate_file_type(file, allowed_types, label):
